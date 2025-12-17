@@ -6,52 +6,64 @@
 <script type="module">
 import { Room, RoomEvent } from "https://cdn.jsdelivr.net/npm/livekit-client@1.15.13/dist/livekit-client.esm.mjs";
 
-const SERVER_URL = "https://inditaskib-23-5b-production.up.railway.app/"; // твой бекенд для получения токена
+const SERVER_URL = "https://inditaskib-23-5b-production.up.railway.app"; // твой FastAPI сервер
+const LIVEKIT_WS = "wss://test-fjir13jl.livekit.cloud"; // твоя LiveKit комната
+const AUDIO_ONLY = true;
+
+// Ждём клика пользователя для старта аудио
+document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("joinBtn");
+    btn.addEventListener("click", init);
+});
 
 async function init() {
-  const res = await fetch(`${SERVER_URL}/get-token?identity=user123`);
-  const data = await res.json();
+    try {
+        // Получаем JWT токен
+        const res = await fetch(`${SERVER_URL}/get-token?identity=user123`);
+        if (!res.ok) throw new Error("Could not fetch token");
+        const data = await res.json();
 
-  // создаём комнату
-  const room = new Room();
+        const room = new Room();
 
-  // подписываемся на события перед подключением
-  room.on(RoomEvent.Disconnected, () => console.log("Disconnected"));
-  room.on(RoomEvent.ParticipantConnected, participant => {
-    console.log("Participant connected:", participant.identity);
-  });
+        room.on(RoomEvent.Disconnected, () => console.log("Disconnected"));
+        room.on(RoomEvent.ParticipantConnected, participant => {
+            console.log("Participant connected:", participant.identity);
+        });
 
-  // подключаемся к LiveKit
-  await room.connect("wss://test-fjir13jl.livekit.cloud", data.token, {
-    autoSubscribe: true, // авто-подписка на треки
-    audio: true,
-    video: false
-  });
+        await room.connect(LIVEKIT_WS, data.token, {
+            audio: true,
+            video: false,
+            autoSubscribe: true,
+        });
 
-  console.log("Connected to room:", room.name);
+        console.log("Connected to room:", room.name);
 
-  // обработка уже существующих участников
-  room.participants.forEach(participant => {
-    participant.tracks.forEach(pub => {
-      if (pub.isSubscribed && pub.track.kind === "audio") {
-        const el = pub.track.attach();
-        document.body.appendChild(el);
-      }
-    });
-    participant.on(RoomEvent.TrackSubscribed, (track) => {
-      if (track.kind === "audio") {
-        const audioEl = track.attach();
-        document.body.appendChild(audioEl);
-      }
-    });
-  });
+        // Подписка на существующих участников
+        room.participants.forEach(participant => {
+            participant.tracks.forEach(pub => {
+                if (pub.isSubscribed && pub.track.kind === "audio") {
+                    const el = pub.track.attach();
+                    document.body.appendChild(el);
+                }
+            });
+
+            participant.on(RoomEvent.TrackSubscribed, track => {
+                if (track.kind === "audio") {
+                    const audioEl = track.attach();
+                    document.body.appendChild(audioEl);
+                }
+            });
+        });
+
+    } catch (err) {
+        console.error("Error connecting to LiveKit:", err);
+    }
 }
-
-window.addEventListener("DOMContentLoaded", init);
 </script>
 </head>
 <body>
 <h1>LiveKit Audio Chat</h1>
-<p>Подключение к комнате аудио...</p>
+<button id="joinBtn">Присоединиться к комнате</button>
+<p>Нажмите кнопку, чтобы подключиться и включить аудио.</p>
 </body>
 </html>
