@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>LiveKit Audio Chat</title>
+<script type="module">
+import { connect } from "https://cdn.jsdelivr.net/npm/livekit-client@1.5.2/dist/livekit-client.es.js";
+
+const SERVER_URL = "https://your-vercel-server.vercel.app"; // сюда твой сервер
+const AUDIO_ONLY = true;
+
+async function init() {
+  // получаем токен с сервера
+  const res = await fetch(`${SERVER_URL}/get-token?identity=user${Math.floor(Math.random()*1000)}`);
+  const data = await res.json();
+
+  const room = await connect("wss://your-livekit-server", data.token, { audio: AUDIO_ONLY, video: false });
+
+  console.log("Connected to room:", room.name);
+
+  room.on("participantConnected", participant => {
+    participant.audioTracks.forEach(trackPub => {
+      if(trackPub.isSubscribed){
+        const audioEl = trackPub.track.attach();
+        document.body.appendChild(audioEl);
+      }
+    });
+    participant.on("trackSubscribed", track => {
+      const audioEl = track.attach();
+      document.body.appendChild(audioEl);
+    });
+  });
+}
+
+window.addEventListener("DOMContentLoaded", init);
+</script>
+</head>
+<body>
+<h1>LiveKit Audio Chat</h1>
+<p>Подключение к комнате аудио...</p>
+</body>
+</html>
