@@ -6,15 +6,16 @@
 <script type="module">
 import { connect } from "https://cdn.jsdelivr.net/npm/livekit-client@1.5.2/dist/livekit-client.es.js";
 
-const SERVER_URL = "https://your-vercel-server.vercel.app"; // сюда твой сервер
+const SERVER_URL = "https://inditaskib-23-5b-production.up.railway.app";
+
 const AUDIO_ONLY = true;
 
 async function init() {
   // получаем токен с сервера
-  const res = await fetch(`${SERVER_URL}/get-token?identity=user${Math.floor(Math.random()*1000)}`);
+  const res = await fetch(`${SERVER_URL}/get-token?identity=user123`); // сюда твой сервер
   const data = await res.json();
 
-  const room = await connect("wss://your-livekit-server", data.token, { audio: AUDIO_ONLY, video: false });
+  const room = await connect("wss://test-fjir13jl.livekit.cloud", data.token, { audio: AUDIO_ONLY, video: false });
 
   console.log("Connected to room:", room.name);
 
