@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <title>LiveKit Audio Chat</title>
 <script type="module">
-import * as LiveKit from "https://cdn.jsdelivr.net/npm/livekit-client@1.15.13/dist/livekit-client.esm.mjs";
+import { connect } from "https://cdn.jsdelivr.net/npm/livekit-client@1.15.13/dist/livekit-client.esm.mjs";
 
 const SERVER_URL = "http://localhost:8000";
 const AUDIO_ONLY = true;
@@ -13,8 +13,8 @@ async function init() {
   const res = await fetch(`${SERVER_URL}/get-token?identity=user123`);
   const data = await res.json();
 
-  // Используем LiveKit.connect вместо прямого connect
-  const room = await LiveKit.connect("wss://test-fjir13jl.livekit.cloud", data.token, { audio: AUDIO_ONLY, video: false });
+  // Подключаемся к комнате через импортированную функцию connect
+  const room = await connect("wss://test-fjir13jl.livekit.cloud", data.token, { audio: AUDIO_ONLY, video: false });
 
   console.log("Connected to room:", room.name);
 
