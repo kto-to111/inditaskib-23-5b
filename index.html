@@ -6,7 +6,7 @@
 <script type="module">
 import { Room, RoomEvent } from "https://cdn.jsdelivr.net/npm/livekit-client@1.15.13/dist/livekit-client.esm.mjs";
 
-const SERVER_URL = "http://localhost:8000"; // твой бекенд для получения токена
+const SERVER_URL = "https://inditaskib-23-5b-production.up.railway.app/"; // твой бекенд для получения токена
 
 async function init() {
   const res = await fetch(`${SERVER_URL}/get-token?identity=user123`);
