@@ -2,36 +2,99 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AI Voice Assistant</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: #f0f2f5; color: #333; }
-        .app-container { background: white; padding: 40px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); display: inline-block; width: 100%; max-width: 400px; }
-        #status { display: block; margin-bottom: 20px; font-weight: bold; color: #7f8c8d; height: 24px; }
-        .btn { padding: 18px; font-size: 18px; cursor: pointer; border: none; border-radius: 12px; width: 100%; font-weight: bold; transition: 0.3s; margin-top: 10px; }
-        #startBtn { background: #007bff; color: white; }
-        #startBtn:disabled { background: #ccc; cursor: not-allowed; }
-        #stopBtn { background: #dc3545; color: white; display: none; }
-        #chat-box { margin-top: 25px; padding: 20px; background: #f8f9fa; border-radius: 12px; min-height: 100px; border-left: 6px solid #007bff; text-align: left; line-height: 1.5; font-size: 16px; }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            background: #f4f7f9; 
+            margin: 0; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .app-container { 
+            background: white; 
+            width: 100%; 
+            max-width: 450px; 
+            padding: 30px; 
+            border-radius: 30px; 
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1); 
+            text-align: center;
+        }
+
+        h1 { font-size: 24px; margin-bottom: 10px; color: #1a1a1a; }
+
+        #status { 
+            display: block; 
+            margin-bottom: 25px; 
+            font-size: 14px; 
+            text-transform: uppercase; 
+            letter-spacing: 1px; 
+            color: #888;
+            font-weight: 700;
+        }
+
+        /* Окно чата адаптировано под мобильный */
+        #chat-box { 
+            background: #f9f9f9; 
+            padding: 20px; 
+            border-radius: 20px; 
+            min-height: 120px; 
+            margin-bottom: 25px; 
+            text-align: left; 
+            font-size: 17px; 
+            line-height: 1.5; 
+            color: #444;
+            border: 1px solid #eee;
+            overflow-wrap: break-word;
+        }
+
+        /* Крупные кнопки для пальцев */
+        .btn { 
+            width: 100%; 
+            padding: 18px; 
+            font-size: 18px; 
+            font-weight: bold; 
+            border: none; 
+            border-radius: 18px; 
+            cursor: pointer; 
+            transition: transform 0.1s, background 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .btn:active { transform: scale(0.97); }
+
+        #startBtn { background: #007AFF; color: white; }
+        #startBtn:disabled { background: #ccc; box-shadow: none; }
+
+        #stopBtn { background: #FF3B30; color: white; display: none; }
+
+        .footer-note { font-size: 12px; color: #bbb; margin-top: 20px; }
     </style>
 </head>
 <body>
 
     <div class="app-container">
-        <h1>Голосовой ИИ</h1>
-        <span id="status">Готов к работе</span>
-        <div id="chat-box">Нажмите "Начать разговор", чтобы ИИ вас услышал.</div>
-        <br>
+        <h1>AI Assistant</h1>
+        <span id="status">Готов</span>
+        
+        <div id="chat-box">Нажмите «Начать», чтобы ИИ вас услышал.</div>
+        
         <button id="startBtn" class="btn">Начать разговор</button>
         <button id="stopBtn" class="btn">Завершить звонок</button>
+        
+        <div class="footer-note">Требуется доступ к микрофону</div>
     </div>
 
     <script>
         // --- КОНФИГУРАЦИЯ ---
-        // Вставьте сюда вашу ссылку ngrok (с https или без)
         let REMOTE_ADDR = "shavable-lupita-pseudomedievally.ngrok-free.dev"; 
-        
-        // Очистка адреса
         REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").split('/')[0];
 
         let socket, audioContext, microphone, processor, currentAudio;
@@ -42,7 +105,6 @@
         const chatBox = document.getElementById('chat-box');
 
         async function closeConnection() {
-            console.log("Завершение сессии...");
             if (microphone) { microphone.getTracks().forEach(t => t.stop()); microphone = null; }
             if (socket) { if (socket.readyState === WebSocket.OPEN) socket.close(); socket = null; }
             if (audioContext && audioContext.state !== 'closed') { await audioContext.close(); audioContext = null; }
@@ -51,18 +113,17 @@
             startBtn.disabled = false;
             stopBtn.style.display = 'none';
             status.innerText = "Связь завершена";
-            status.style.color = "#7f8c8d";
+            status.style.color = "#888";
         }
 
         startBtn.onclick = async () => {
             try {
-                // Инициализируем аудио по клику
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 
                 startBtn.disabled = true;
                 stopBtn.style.display = 'block';
-                status.innerText = "Установка соединения...";
-                status.style.color = "#007bff";
+                status.innerText = "Подключение...";
+                status.style.color = "#007AFF";
 
                 socket = new WebSocket(`wss://${REMOTE_ADDR}/ws`);
 
@@ -92,19 +153,13 @@
                 socket.onmessage = async (event) => {
                     const data = JSON.parse(event.data);
                     if (data.event === "play") {
-                        chatBox.innerText = "ИИ: " + data.text;
-                        
+                        chatBox.innerText = data.text;
                         const audioUrl = `https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`;
-                        console.log("Загрузка аудио:", audioUrl);
 
                         try {
-                            // ИСПОЛЬЗУЕМ FETCH ДЛЯ ОБХОДА ПРЕДУПРЕЖДЕНИЯ NGROK
                             const response = await fetch(audioUrl, {
                                 headers: { 'ngrok-skip-browser-warning': 'true' }
                             });
-                            
-                            if (!response.ok) throw new Error("Файл не найден на сервере");
-                            
                             const blob = await response.blob();
                             const blobUrl = URL.createObjectURL(blob);
 
@@ -112,18 +167,18 @@
                             currentAudio = new Audio(blobUrl);
                             await currentAudio.play();
                         } catch (err) {
-                            console.error("Ошибка загрузки аудио:", err);
+                            console.error("Ошибка аудио:", err);
                         }
                     }
                 };
 
                 socket.onclose = () => closeConnection();
-                status.innerText = "Слушаю вас...";
-                status.style.color = "#28a745";
+                status.innerText = "Слушаю...";
+                status.style.color = "#28CD41";
 
             } catch (err) {
-                console.error("Критическая ошибка:", err);
-                alert("Нет доступа к микрофону или серверу.");
+                console.error(err);
+                alert("Ошибка! Проверьте микрофон в настройках браузера.");
                 closeConnection();
             }
         };
