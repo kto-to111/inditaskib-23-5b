@@ -36,51 +36,48 @@
             70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(255, 59, 48, 0); }
             100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
         }
-        .status-text { margin-top: 15px; font-size: 14px; color: #888; font-weight: 700; letter-spacing: 0.5px; }
+        .status-text { margin-top: 15px; font-size: 14px; color: #888; font-weight: 700; }
+        /* Индикатор громкости */
+        .vol-bar { width: 100%; height: 4px; background: #eee; border-radius: 2px; margin-top: 10px; overflow: hidden; }
+        #vol-level { width: 0%; height: 100%; background: #007AFF; transition: width 0.1s; }
     </style>
 </head>
 <body>
 
     <div class="card">
-        <div id="chat">Нажмите на микрофон, чтобы начать постоянный диалог...</div>
+        <div id="chat">Нажмите для старта...</div>
         <button id="recordBtn" class="record-btn">🎤</button>
+        <div class="vol-bar"><div id="vol-level"></div></div>
         <div class="status-text" id="status">ВЫКЛЮЧЕНО</div>
     </div>
 
     <script>
-        // --- КОНФИГУРАЦИЯ ---
         let REMOTE_ADDR = "shavable-lupita-pseudomedievally.ngrok-free.dev"; 
         REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").split('/')[0];
 
         let socket, mediaRecorder, currentAudio, isRecording = false;
         let audioChunks = [];
+        let maxVolumeInChunk = 0; // Для отслеживания пиков громкости
 
         const btn = document.getElementById('recordBtn');
         const chat = document.getElementById('chat');
         const statusText = document.getElementById('status');
+        const volLevel = document.getElementById('vol-level');
 
-        // Инициализация WebSocket
         function connect() {
             socket = new WebSocket(`wss://${REMOTE_ADDR}/ws`);
             socket.onmessage = async (e) => {
                 const data = JSON.parse(e.data);
                 if (data.event === "play") {
                     chat.innerText = "ИИ: " + data.text;
-                    try {
-                        const res = await fetch(`https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`, { 
-                            headers: {'ngrok-skip-browser-warning': 'true'} 
-                        });
-                        const blob = await res.blob();
-                        if (currentAudio) currentAudio.pause();
-                        currentAudio = new Audio(URL.createObjectURL(blob));
-                        await currentAudio.play();
-                    } catch (err) { console.error("Ошибка аудио:", err); }
+                    const res = await fetch(`https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`, { headers: {'ngrok-skip-browser-warning': 'true'} });
+                    const blob = await res.blob();
+                    if (currentAudio) currentAudio.pause();
+                    currentAudio = new Audio(URL.createObjectURL(blob));
+                    currentAudio.play();
                 }
             };
-            socket.onclose = () => {
-                console.log("WebSocket закрыт, переподключение...");
-                setTimeout(connect, 2000);
-            };
+            socket.onclose = () => setTimeout(connect, 2000);
         }
         connect();
 
@@ -89,66 +86,80 @@
 
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-                                 ? 'audio/webm;codecs=opus' : 'audio/webm';
                 
+                // Настройка анализатора звука (VAD)
+                const audioCtx = new AudioContext();
+                const source = audioCtx.createMediaStreamSource(stream);
+                const analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
                 mediaRecorder = new MediaRecorder(stream, { mimeType });
                 audioChunks = [];
+                maxVolumeInChunk = 0;
 
-                mediaRecorder.ondataavailable = e => {
-                    if (e.data.size > 0) audioChunks.push(e.data);
+                // Функция мониторинга громкости
+                const checkVolume = () => {
+                    if (!isRecording || mediaRecorder.state !== "recording") return;
+                    analyser.getByteFrequencyData(dataArray);
+                    let sum = 0;
+                    for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                    let average = sum / dataArray.length;
+                    
+                    if (average > maxVolumeInChunk) maxVolumeInChunk = average;
+                    volLevel.style.width = Math.min(100, average * 2) + "%"; // Визуализация
+                    requestAnimationFrame(checkVolume);
                 };
+
+                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
 
                 mediaRecorder.onstop = async () => {
                     const audioBlob = new Blob(audioChunks, { type: mimeType });
                     
-                    // Отправляем только если кусок весит больше 2кб (защита от пустоты)
-                    if (audioBlob.size > 2000 && socket.readyState === WebSocket.OPEN) {
+                    // ПОРОГ ЧУВСТВИТЕЛЬНОСТИ: 5 — это тихий шепот. 
+                    // Если maxVolumeInChunk < 5, значит была тишина.
+                    if (maxVolumeInChunk > 5 && audioBlob.size > 2000 && socket.readyState === WebSocket.OPEN) {
                         const buffer = await audioBlob.arrayBuffer();
                         socket.send(buffer);
-                        console.log("Фрагмент отправлен, размер:", audioBlob.size);
+                        console.log("Голос обнаружен, отправка. Громкость:", maxVolumeInChunk);
+                    } else {
+                        console.log("Тишина проигнорирована. Пик:", maxVolumeInChunk);
                     }
                     
-                    // Освобождаем микрофон и сразу запускаем новый фрагмент
                     stream.getTracks().forEach(t => t.stop());
+                    audioCtx.close();
                     if (isRecording) startFragment();
                 };
 
-                // Записываем кусок длиной 4 секунды
                 mediaRecorder.start();
+                checkVolume();
+
                 setTimeout(() => {
-                    if (mediaRecorder.state === "recording") {
-                        mediaRecorder.stop();
-                    }
+                    if (mediaRecorder.state === "recording") mediaRecorder.stop();
                 }, 4000);
 
-            } catch (err) {
-                console.error("Ошибка доступа:", err);
-                isRecording = false;
-                updateUI();
-            }
+            } catch (err) { console.error(err); isRecording = false; updateUI(); }
         }
 
         function updateUI() {
             if (isRecording) {
                 btn.classList.add('active');
-                statusText.innerText = "СЛУШАЮ (ПОСТОЯННО)";
+                statusText.innerText = "СЛУШАЮ...";
                 statusText.style.color = "#FF3B30";
             } else {
                 btn.classList.remove('active');
                 statusText.innerText = "ВЫКЛЮЧЕНО";
                 statusText.style.color = "#888";
+                volLevel.style.width = "0%";
             }
         }
 
         btn.addEventListener('click', () => {
             isRecording = !isRecording;
             updateUI();
-            if (isRecording) {
-                startFragment();
-            } else if (mediaRecorder) {
-                mediaRecorder.stop();
-            }
+            if (isRecording) startFragment();
         });
     </script>
 </body>
