@@ -19,16 +19,24 @@
             background: #f8f9fa; padding: 20px; border-radius: 20px; 
             min-height: 120px; margin-bottom: 25px; text-align: left; 
             font-size: 17px; border: 1px solid #eee; line-height: 1.4; color: #333;
+            max-height: 200px; overflow-y: auto;
         }
         .record-btn { 
             width: 90px; height: 90px; border-radius: 50%; border: none; 
             background: #007AFF; color: white; font-size: 35px; cursor: pointer;
-            transition: all 0.2s ease; box-shadow: 0 5px 15px rgba(0,122,255,0.3);
+            transition: all 0.3s ease; box-shadow: 0 5px 15px rgba(0,122,255,0.3);
             display: inline-flex; align-items: center; justify-content: center;
         }
-        .record-btn:active, .record-btn.active { 
-            background: #FF3B30; transform: scale(1.1); 
-            box-shadow: 0 0 25px rgba(255,59,48,0.5); 
+        /* Анимация пульсации когда включен */
+        .record-btn.active { 
+            background: #FF3B30; 
+            box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 20px rgba(255, 59, 48, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
         }
         .status-text { margin-top: 15px; font-size: 14px; color: #888; font-weight: 600; }
     </style>
@@ -36,31 +44,27 @@
 <body>
 
     <div class="card">
-        <div id="chat">Нажмите и удерживайте кнопку, чтобы говорить...</div>
+        <div id="chat">Нажмите на микрофон, чтобы начать постоянный диалог...</div>
         <button id="recordBtn" class="record-btn">🎤</button>
-        <div class="status-text" id="status">ЗАЖМИТЕ ДЛЯ ЗАПИСИ</div>
+        <div class="status-text" id="status">ВЫКЛЮЧЕНО</div>
     </div>
 
     <script>
-        // --- УКАЖИТЕ ВАШ АДРЕС NGROK ТУТ ---
         let REMOTE_ADDR = "shavable-lupita-pseudomedievally.ngrok-free.dev"; 
         REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").split('/')[0];
 
-        let socket, mediaRecorder, audioChunks = [], currentAudio;
+        let socket, mediaRecorder, currentAudio, isRecording = false;
 
         const btn = document.getElementById('recordBtn');
         const chat = document.getElementById('chat');
         const statusText = document.getElementById('status');
 
-        // Инициализация WebSocket
         function connect() {
             socket = new WebSocket(`wss://${REMOTE_ADDR}/ws`);
             socket.onmessage = async (e) => {
                 const data = JSON.parse(e.data);
                 if (data.event === "play") {
-                    chat.innerText = data.text;
-                    statusText.innerText = "ИИ ОТВЕЧАЕТ";
-                    
+                    chat.innerText = "ИИ: " + data.text;
                     try {
                         const res = await fetch(`https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`, { 
                             headers: {'ngrok-skip-browser-warning': 'true'} 
@@ -69,64 +73,52 @@
                         if (currentAudio) currentAudio.pause();
                         currentAudio = new Audio(URL.createObjectURL(blob));
                         await currentAudio.play();
-                    } catch (err) { console.error("Ошибка звука:", err); }
-                    
-                    statusText.innerText = "ГОТОВ";
+                    } catch (err) { console.error(err); }
                 }
             };
-            socket.onclose = () => setTimeout(connect, 2000); // Автопереподключение
+            socket.onclose = () => setTimeout(connect, 2000);
         }
         connect();
 
-        async function startRecording() {
-            try {
-                // Выбор кодека, который понимает Whisper
-                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-                                 ? 'audio/webm;codecs=opus' : 'audio/webm';
-                
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                mediaRecorder = new MediaRecorder(stream, { mimeType });
-                audioChunks = [];
+        async function toggleRecording() {
+            if (!isRecording) {
+                // ВКЛЮЧАЕМ
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+                                     ? 'audio/webm;codecs=opus' : 'audio/webm';
+                    
+                    mediaRecorder = new MediaRecorder(stream, { mimeType });
+                    
+                    mediaRecorder.ondataavailable = async (e) => {
+                        if (e.data.size > 1000 && socket.readyState === WebSocket.OPEN) {
+                            const buffer = await e.data.arrayBuffer();
+                            socket.send(buffer);
+                        }
+                    };
 
-                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-                
-                mediaRecorder.onstop = async () => {
-                    const audioBlob = new Blob(audioChunks, { type: mimeType });
-                    if (audioBlob.size > 1000 && socket.readyState === WebSocket.OPEN) {
-                        const buffer = await audioBlob.arrayBuffer();
-                        socket.send(buffer);
-                        console.log("Отправлено байт:", buffer.byteLength);
-                    }
-                    // Закрываем микрофон
-                    stream.getTracks().forEach(t => t.stop());
-                };
-
-                mediaRecorder.start();
-                btn.classList.add('active');
-                statusText.innerText = "СЛУШАЮ...";
-                statusText.style.color = "#FF3B30";
-            } catch (err) {
-                alert("Разрешите доступ к микрофону!");
-            }
-        }
-
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    // Каждые 4000мс (4 секунды) создаем "фрагмент" и отправляем его
+                    mediaRecorder.start(4000); 
+                    
+                    isRecording = true;
+                    btn.classList.add('active');
+                    statusText.innerText = "ГОВОРИТЕ (ПОСТОЯННО)";
+                    statusText.style.color = "#FF3B30";
+                } catch (err) {
+                    alert("Ошибка доступа к микрофону");
+                }
+            } else {
+                // ВЫКЛЮЧАЕМ
+                isRecording = false;
                 mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(t => t.stop());
                 btn.classList.remove('active');
-                statusText.innerText = "ОБРАБОТКА...";
-                statusText.style.color = "#007AFF";
+                statusText.innerText = "ВЫКЛЮЧЕНО";
+                statusText.style.color = "#888";
             }
         }
 
-        // События для ПК
-        btn.addEventListener('mousedown', startRecording);
-        btn.addEventListener('mouseup', stopRecording);
-        btn.addEventListener('mouseleave', stopRecording);
-
-        // События для телефонов
-        btn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-        btn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+        btn.addEventListener('click', toggleRecording);
     </script>
 </body>
 </html>
