@@ -6,184 +6,127 @@
     <title>AI Voice Assistant</title>
     <style>
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-        
         body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            background: #f4f7f9; 
-            margin: 0; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, system-ui, sans-serif; 
+            background: #f0f2f5; margin: 0; display: flex; 
+            align-items: center; justify-content: center; min-height: 100vh; 
         }
-
-        .app-container { 
-            background: white; 
-            width: 100%; 
-            max-width: 450px; 
-            padding: 30px; 
-            border-radius: 30px; 
-            box-shadow: 0 15px 35px rgba(0,0,0,0.1); 
-            text-align: center;
+        .card { 
+            background: white; width: 90%; max-width: 400px; padding: 30px; 
+            border-radius: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; 
         }
-
-        h1 { font-size: 24px; margin-bottom: 10px; color: #1a1a1a; }
-
-        #status { 
-            display: block; 
-            margin-bottom: 25px; 
-            font-size: 14px; 
-            text-transform: uppercase; 
-            letter-spacing: 1px; 
-            color: #888;
-            font-weight: 700;
+        #chat { 
+            background: #f8f9fa; padding: 20px; border-radius: 20px; 
+            min-height: 120px; margin-bottom: 25px; text-align: left; 
+            font-size: 17px; border: 1px solid #eee; line-height: 1.4; color: #333;
         }
-
-        /* Окно чата адаптировано под мобильный */
-        #chat-box { 
-            background: #f9f9f9; 
-            padding: 20px; 
-            border-radius: 20px; 
-            min-height: 120px; 
-            margin-bottom: 25px; 
-            text-align: left; 
-            font-size: 17px; 
-            line-height: 1.5; 
-            color: #444;
-            border: 1px solid #eee;
-            overflow-wrap: break-word;
+        .record-btn { 
+            width: 90px; height: 90px; border-radius: 50%; border: none; 
+            background: #007AFF; color: white; font-size: 35px; cursor: pointer;
+            transition: all 0.2s ease; box-shadow: 0 5px 15px rgba(0,122,255,0.3);
+            display: inline-flex; align-items: center; justify-content: center;
         }
-
-        /* Крупные кнопки для пальцев */
-        .btn { 
-            width: 100%; 
-            padding: 18px; 
-            font-size: 18px; 
-            font-weight: bold; 
-            border: none; 
-            border-radius: 18px; 
-            cursor: pointer; 
-            transition: transform 0.1s, background 0.3s;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        .record-btn:active, .record-btn.active { 
+            background: #FF3B30; transform: scale(1.1); 
+            box-shadow: 0 0 25px rgba(255,59,48,0.5); 
         }
-
-        .btn:active { transform: scale(0.97); }
-
-        #startBtn { background: #007AFF; color: white; }
-        #startBtn:disabled { background: #ccc; box-shadow: none; }
-
-        #stopBtn { background: #FF3B30; color: white; display: none; }
-
-        .footer-note { font-size: 12px; color: #bbb; margin-top: 20px; }
+        .status-text { margin-top: 15px; font-size: 14px; color: #888; font-weight: 600; }
     </style>
 </head>
 <body>
 
-    <div class="app-container">
-        <h1>AI Assistant</h1>
-        <span id="status">Готов</span>
-        
-        <div id="chat-box">Нажмите «Начать», чтобы ИИ вас услышал.</div>
-        
-        <button id="startBtn" class="btn">Начать разговор</button>
-        <button id="stopBtn" class="btn">Завершить звонок</button>
-        
-        <div class="footer-note">Требуется доступ к микрофону</div>
+    <div class="card">
+        <div id="chat">Нажмите и удерживайте кнопку, чтобы говорить...</div>
+        <button id="recordBtn" class="record-btn">🎤</button>
+        <div class="status-text" id="status">ЗАЖМИТЕ ДЛЯ ЗАПИСИ</div>
     </div>
 
     <script>
-        // --- КОНФИГУРАЦИЯ ---
+        // --- УКАЖИТЕ ВАШ АДРЕС NGROK ТУТ ---
         let REMOTE_ADDR = "shavable-lupita-pseudomedievally.ngrok-free.dev"; 
         REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").split('/')[0];
 
-        let socket, audioContext, microphone, processor, currentAudio;
+        let socket, mediaRecorder, audioChunks = [], currentAudio;
 
-        const startBtn = document.getElementById('startBtn');
-        const stopBtn = document.getElementById('stopBtn');
-        const status = document.getElementById('status');
-        const chatBox = document.getElementById('chat-box');
+        const btn = document.getElementById('recordBtn');
+        const chat = document.getElementById('chat');
+        const statusText = document.getElementById('status');
 
-        async function closeConnection() {
-            if (microphone) { microphone.getTracks().forEach(t => t.stop()); microphone = null; }
-            if (socket) { if (socket.readyState === WebSocket.OPEN) socket.close(); socket = null; }
-            if (audioContext && audioContext.state !== 'closed') { await audioContext.close(); audioContext = null; }
-            if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-            
-            startBtn.disabled = false;
-            stopBtn.style.display = 'none';
-            status.innerText = "Связь завершена";
-            status.style.color = "#888";
+        // Инициализация WebSocket
+        function connect() {
+            socket = new WebSocket(`wss://${REMOTE_ADDR}/ws`);
+            socket.onmessage = async (e) => {
+                const data = JSON.parse(e.data);
+                if (data.event === "play") {
+                    chat.innerText = data.text;
+                    statusText.innerText = "ИИ ОТВЕЧАЕТ";
+                    
+                    try {
+                        const res = await fetch(`https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`, { 
+                            headers: {'ngrok-skip-browser-warning': 'true'} 
+                        });
+                        const blob = await res.blob();
+                        if (currentAudio) currentAudio.pause();
+                        currentAudio = new Audio(URL.createObjectURL(blob));
+                        await currentAudio.play();
+                    } catch (err) { console.error("Ошибка звука:", err); }
+                    
+                    statusText.innerText = "ГОТОВ";
+                }
+            };
+            socket.onclose = () => setTimeout(connect, 2000); // Автопереподключение
+        }
+        connect();
+
+        async function startRecording() {
+            try {
+                // Выбор кодека, который понимает Whisper
+                const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+                                 ? 'audio/webm;codecs=opus' : 'audio/webm';
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream, { mimeType });
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+                
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: mimeType });
+                    if (audioBlob.size > 1000 && socket.readyState === WebSocket.OPEN) {
+                        const buffer = await audioBlob.arrayBuffer();
+                        socket.send(buffer);
+                        console.log("Отправлено байт:", buffer.byteLength);
+                    }
+                    // Закрываем микрофон
+                    stream.getTracks().forEach(t => t.stop());
+                };
+
+                mediaRecorder.start();
+                btn.classList.add('active');
+                statusText.innerText = "СЛУШАЮ...";
+                statusText.style.color = "#FF3B30";
+            } catch (err) {
+                alert("Разрешите доступ к микрофону!");
+            }
         }
 
-        startBtn.onclick = async () => {
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
-                
-                startBtn.disabled = true;
-                stopBtn.style.display = 'block';
-                status.innerText = "Подключение...";
-                status.style.color = "#007AFF";
-
-                socket = new WebSocket(`wss://${REMOTE_ADDR}/ws`);
-
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } 
-                });
-                microphone = stream;
-
-                const source = audioContext.createMediaStreamSource(stream);
-                processor = audioContext.createScriptProcessor(8192, 1, 1);
-
-                source.connect(processor);
-                processor.connect(audioContext.destination);
-
-                processor.onaudioprocess = (e) => {
-                    if (socket && socket.readyState === WebSocket.OPEN) {
-                        const inputData = e.inputBuffer.getChannelData(0);
-                        const pcmData = new Int16Array(inputData.length);
-                        for (let i = 0; i < inputData.length; i++) {
-                            let s = Math.max(-1, Math.min(1, inputData[i]));
-                            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                        }
-                        socket.send(pcmData.buffer);
-                    }
-                };
-
-                socket.onmessage = async (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.event === "play") {
-                        chatBox.innerText = data.text;
-                        const audioUrl = `https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`;
-
-                        try {
-                            const response = await fetch(audioUrl, {
-                                headers: { 'ngrok-skip-browser-warning': 'true' }
-                            });
-                            const blob = await response.blob();
-                            const blobUrl = URL.createObjectURL(blob);
-
-                            if (currentAudio) currentAudio.pause();
-                            currentAudio = new Audio(blobUrl);
-                            await currentAudio.play();
-                        } catch (err) {
-                            console.error("Ошибка аудио:", err);
-                        }
-                    }
-                };
-
-                socket.onclose = () => closeConnection();
-                status.innerText = "Слушаю...";
-                status.style.color = "#28CD41";
-
-            } catch (err) {
-                console.error(err);
-                alert("Ошибка! Проверьте микрофон в настройках браузера.");
-                closeConnection();
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                btn.classList.remove('active');
+                statusText.innerText = "ОБРАБОТКА...";
+                statusText.style.color = "#007AFF";
             }
-        };
+        }
 
-        stopBtn.onclick = closeConnection;
+        // События для ПК
+        btn.addEventListener('mousedown', startRecording);
+        btn.addEventListener('mouseup', stopRecording);
+        btn.addEventListener('mouseleave', stopRecording);
+
+        // События для телефонов
+        btn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
     </script>
 </body>
 </html>
