@@ -1,63 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>LiveKit Audio Chat</title>
-  <script type="module">
-    import { Room } from "https://cdn.jsdelivr.net/npm/livekit-client@1.15.13/dist/livekit-client.esm.mjs";
-
-    const SERVER_URL = "https://inditaskib-23-5b-production.up.railway.app"; // FastAPI
-    const LIVEKIT_WS = "wss://test-fjir13jl.livekit.cloud"; // твой LiveKit сервер
-
-    async function init() {
-      try {
-        // 1️⃣ Получаем токен с FastAPI
-        const res = await fetch(`${SERVER_URL}/get-token?identity=user123`);
-        if (!res.ok) throw new Error(`Failed to get token: ${res.status}`);
-        const data = await res.json();
-        const token = data.token;
-
-        console.log("Получен токен:", token);
-
-        // 2️⃣ Создаем комнату LiveKit
-        const room = new Room();
-
-        // 3️⃣ Подключаемся к комнате
-        await room.connect(LIVEKIT_WS, token, { audio: true, video: false });
-        console.log("Подключено к комнате:", room.name);
-
-        // 4️⃣ Подключаем аудио участников
-        room.on("participantConnected", participant => {
-          participant.audioTracks.forEach(pub => {
-            if (pub.isSubscribed) {
-              const el = pub.track.attach();
-              document.body.appendChild(el);
-            }
-          });
-
-          participant.on("trackSubscribed", track => {
-            const el = track.attach();
-            document.body.appendChild(el);
-          });
-        });
-
-        // 5️⃣ Подключаем свой микрофон
-        const localTrack = await Room.createLocalTracks({ audio: true, video: false });
-        await room.localParticipant.publishTracks(localTrack);
-
-      } catch (err) {
-        console.error("Ошибка подключения к LiveKit:", err);
-      }
-    }
-
-    // Запуск после user gesture (для AudioContext)
-    document.addEventListener("click", () => {
-      init();
-    });
-  </script>
+    <meta charset="UTF-8">
+    <title>AI Voice Assistant</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 50px; background: #ececec; }
+        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: inline-block; min-width: 300px; }
+        #status { display: block; margin-bottom: 20px; color: #666; font-weight: bold; }
+        .btn { padding: 15px 30px; font-size: 16px; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; margin: 5px; width: 200px; }
+        #startBtn { background: #28a745; color: white; }
+        #stopBtn { background: #dc3545; color: white; display: none; }
+        #chat { margin-top: 20px; font-size: 18px; color: #333; min-height: 50px; }
+    </style>
 </head>
 <body>
-  <h1>LiveKit Audio Chat</h1>
-  <p>Нажмите на страницу для подключения аудио</p>
+    <div class="container">
+        <h1>Голосовой ИИ</h1>
+        <span id="status">Готов</span>
+        <div id="chat">Нажмите "Начать", чтобы заговорить</div>
+        <br>
+        <button class="btn" id="startBtn">Начать разговор</button>
+        <button class="btn" id="stopBtn">Положить трубку</button>
+    </div>
+
+    <script>
+        let socket, audioContext, microphone, processor, currentAudio;
+
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const status = document.getElementById('status');
+        const chat = document.getElementById('chat');
+
+        async function stopAll() {
+            if (microphone) microphone.getTracks().forEach(t => t.stop());
+            if (socket) socket.close();
+            if (audioContext) audioContext.close();
+            if (currentAudio) currentAudio.pause();
+
+            startBtn.disabled = false;
+            stopBtn.style.display = 'none';
+            status.innerText = "Разговор окончен";
+            status.style.color = "#666";
+        }
+
+        startBtn.onclick = async () => {
+            try {
+                startBtn.disabled = true;
+                stopBtn.style.display = 'inline-block';
+                status.innerText = "Подключение...";
+                status.style.color = "#f39c12";
+
+                socket = new WebSocket(`https://shavable-lupita-pseudomedievally.ngrok-free.dev`);
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                });
+                microphone = stream;
+
+                audioContext = new AudioContext({ sampleRate: 44100 });
+                const source = audioContext.createMediaStreamSource(stream);
+
+                // Создаем процессор с большим буфером для стабильности
+                processor = audioContext.createScriptProcessor(8192, 1, 1);
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                processor.onaudioprocess = (e) => {
+                    if (socket && socket.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            // Усиливаем амплитуду для лучшего распознавания
+                            let s = Math.max(-1, Math.min(1, inputData[i]));
+                            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+                        socket.send(pcmData.buffer);
+                    }
+                };
+
+                socket.onmessage = async (event) => {
+                    const msg = JSON.parse(event.data);
+                    if (msg.event === "play") {
+                        chat.innerText = msg.text;
+                        if (currentAudio) currentAudio.pause();
+                        currentAudio = new Audio("https://shavable-lupita-pseudomedievally.ngrok-free.dev" + msg.url + "?t=" + new Date().getTime());
+                        await currentAudio.play();
+                    }
+                };
+
+                socket.onclose = () => stopAll();
+                status.innerText = "Я вас слушаю...";
+                status.style.color = "#28a745";
+
+            } catch (err) {
+                console.error(err);
+                alert("Микрофон недоступен");
+                stopAll();
+            }
+        };
+
+        stopBtn.onclick = stopAll;
+    </script>
 </body>
 </html>
