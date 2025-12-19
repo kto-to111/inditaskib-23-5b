@@ -5,14 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Voice Assistant</title>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; padding: 50px; background: #f0f2f5; color: #333; }
+        body { font-family: 'Segoe UI', sans-serif; text-align: center; padding: 50px; background: #f0f2f5; color: #333; }
         .app-container { background: white; padding: 40px; border-radius: 24px; box-shadow: 0 10px 40px rgba(0,0,0,0.1); display: inline-block; width: 100%; max-width: 400px; }
-        #status { display: block; margin-bottom: 20px; font-weight: bold; color: #7f8c8d; height: 20px; }
+        #status { display: block; margin-bottom: 20px; font-weight: bold; color: #7f8c8d; height: 24px; }
         .btn { padding: 18px; font-size: 18px; cursor: pointer; border: none; border-radius: 12px; width: 100%; font-weight: bold; transition: 0.3s; margin-top: 10px; }
         #startBtn { background: #007bff; color: white; }
         #startBtn:disabled { background: #ccc; cursor: not-allowed; }
         #stopBtn { background: #dc3545; color: white; display: none; }
-        #chat-box { margin-top: 25px; padding: 20px; background: #f8f9fa; border-radius: 12px; min-height: 100px; border-left: 6px solid #007bff; text-align: left; line-height: 1.5; }
+        #chat-box { margin-top: 25px; padding: 20px; background: #f8f9fa; border-radius: 12px; min-height: 100px; border-left: 6px solid #007bff; text-align: left; line-height: 1.5; font-size: 16px; }
     </style>
 </head>
 <body>
@@ -28,9 +28,11 @@
 
     <script>
         // --- КОНФИГУРАЦИЯ ---
-        let REMOTE_ADDR = "https://shavable-lupita-pseudomedievally.ngrok-free.dev"; 
-        // Очистка адреса от протоколов, если они случайно введены
-        REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").replace("/", "");
+        // Вставьте сюда вашу ссылку ngrok (с https или без)
+        let REMOTE_ADDR = "shavable-lupita-pseudomedievally.ngrok-free.dev"; 
+        
+        // Очистка адреса
+        REMOTE_ADDR = REMOTE_ADDR.replace("https://", "").replace("http://", "").split('/')[0];
 
         let socket, audioContext, microphone, processor, currentAudio;
 
@@ -41,27 +43,10 @@
 
         async function closeConnection() {
             console.log("Завершение сессии...");
-            
-            if (microphone) {
-                microphone.getTracks().forEach(t => t.stop());
-                microphone = null;
-            }
-
-            if (socket) {
-                if (socket.readyState === WebSocket.OPEN) socket.close();
-                socket = null;
-            }
-
-            if (audioContext && audioContext.state !== 'closed') {
-                await audioContext.close();
-                audioContext = null;
-            }
-
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio.src = "";
-                currentAudio = null;
-            }
+            if (microphone) { microphone.getTracks().forEach(t => t.stop()); microphone = null; }
+            if (socket) { if (socket.readyState === WebSocket.OPEN) socket.close(); socket = null; }
+            if (audioContext && audioContext.state !== 'closed') { await audioContext.close(); audioContext = null; }
+            if (currentAudio) { currentAudio.pause(); currentAudio = null; }
             
             startBtn.disabled = false;
             stopBtn.style.display = 'none';
@@ -71,7 +56,7 @@
 
         startBtn.onclick = async () => {
             try {
-                // Активация аудио-контекста по клику пользователя (важно для браузеров)
+                // Инициализируем аудио по клику
                 audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
                 
                 startBtn.disabled = true;
@@ -87,7 +72,6 @@
                 microphone = stream;
 
                 const source = audioContext.createMediaStreamSource(stream);
-                // Буфер 8192 для стабильности на ngrok
                 processor = audioContext.createScriptProcessor(8192, 1, 1);
 
                 source.connect(processor);
@@ -111,30 +95,29 @@
                         chatBox.innerText = "ИИ: " + data.text;
                         
                         const audioUrl = `https://${REMOTE_ADDR}${data.url}?t=${Date.now()}`;
-                        console.log("Воспроизведение:", audioUrl);
+                        console.log("Загрузка аудио:", audioUrl);
 
-                        if (currentAudio) {
-                            currentAudio.pause();
+                        try {
+                            // ИСПОЛЬЗУЕМ FETCH ДЛЯ ОБХОДА ПРЕДУПРЕЖДЕНИЯ NGROK
+                            const response = await fetch(audioUrl, {
+                                headers: { 'ngrok-skip-browser-warning': 'true' }
+                            });
+                            
+                            if (!response.ok) throw new Error("Файл не найден на сервере");
+                            
+                            const blob = await response.blob();
+                            const blobUrl = URL.createObjectURL(blob);
+
+                            if (currentAudio) currentAudio.pause();
+                            currentAudio = new Audio(blobUrl);
+                            await currentAudio.play();
+                        } catch (err) {
+                            console.error("Ошибка загрузки аудио:", err);
                         }
-
-                        currentAudio = new Audio();
-                        currentAudio.crossOrigin = "anonymous";
-                        currentAudio.src = audioUrl;
-
-                        currentAudio.play().catch(err => {
-                            console.error("Ошибка аудио:", err);
-                            // Если файл не успел прогрузиться (404), пробуем еще раз через 1 сек
-                            setTimeout(() => currentAudio.play(), 1000);
-                        });
                     }
                 };
 
                 socket.onclose = () => closeConnection();
-                socket.onerror = () => {
-                    alert("Ошибка WebSocket. Проверьте адрес сервера и ngrok.");
-                    closeConnection();
-                };
-
                 status.innerText = "Слушаю вас...";
                 status.style.color = "#28a745";
 
