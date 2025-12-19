@@ -86,11 +86,18 @@
                 socket.onmessage = async (event) => {
                     const data = JSON.parse(event.data);
                     if (data.event === "play") {
+                        console.log("Получена ссылка на аудио:", data.url);
                         chatBox.innerText = "ИИ: " + data.text;
                         if (currentAudio) currentAudio.pause();
                         // Полный URL для аудиофайла
                         const audioUrl = `https://${REMOTE_SERVER}${data.url}?t=${Date.now()}`;
+                        console.log("Пытаюсь воспроизвести:", audioUrl);
+                        
                         currentAudio = new Audio(audioUrl);
+                        currentAudio.play().catch(e => {
+                            console.error("Ошибка воспроизведения аудио:", e);
+                            status.innerText = "Ошибка звука! Кликните на страницу.";
+                        });
                         await currentAudio.play();
                     }
                 };
